@@ -1,6 +1,7 @@
 import os
 import argparse
 import random
+import numpy as np
 import shutil
 from shutil import copyfile
 from misc import printProgressBar
@@ -22,87 +23,63 @@ def main(config):
     rm_mkdir(config.test_path)
     rm_mkdir(config.test_GT_path)
 
-    filenames = os.listdir(config.origin_data_path)
-    data_list = []
-    GT_list = []
+    train_data = open(config.train_list, 'r')
+    valid_data = open(config.valid_list, 'r')
+    lines_train = train_data.readlines()
+    lines_valid = valid_data.readlines()
 
-    for filename in filenames:
-        ext = os.path.splitext(filename)[-1]
-        if ext == '.jpg':
-            filename = filename.split('_')[-1][:-len('.jpg')]
-            data_list.append('ISIC_' + filename + '.jpg')
-            GT_list.append('ISIC_' + filename + '_segmentation.png')
-
-    num_total = len(data_list)
-    num_train = int((config.train_ratio / (config.train_ratio + config.valid_ratio + config.test_ratio)) * num_total)
-    num_valid = int((config.valid_ratio / (config.train_ratio + config.valid_ratio + config.test_ratio)) * num_total)
-    num_test = num_total - num_train - num_valid
+    num_train = len(lines_train)
+    num_valid = len(lines_valid)
 
     print('\nNum of train set : ', num_train)
     print('\nNum of valid set : ', num_valid)
-    print('\nNum of test set : ', num_test)
 
-    Arange = list(range(num_total))
-    random.shuffle(Arange)
+    for filename in lines_train:
+        img_train_src = os.path.join(config.origin_data_path, config.train_fold, filename)
+        img_train_dst = os.path.join(config.train_path, filename)
+        copyfile(img_train_src, img_train_dst)
 
-    for i in range(num_train):
-        idx = Arange.pop()
+        gt_train_src = os.path.join(config.origin_GT_path, config.train_fold, filename)
+        gt_train_dst = os.path.join(config.train_GT_path, filename)
+        if os.path.exists(gt_train_src):
+            copyfile(gt_train_src, gt_train_dst)
+        else:
+            img = np.load(img_train_src)
+            gt = np.zeros(img.shape)
+            np.save(gt_train_dst, gt)
 
-        src = os.path.join(config.origin_data_path, data_list[idx])
-        dst = os.path.join(config.train_path, data_list[idx])
-        copyfile(src, dst)
+    for filename in lines_valid:
+        img_valid_src = os.path.join(config.origin_data_path, config.valid_fold, filename)
+        img_valid_dst = os.path.join(config.valid_path, filename)
+        copyfile(img_valid_src, img_valid_dst)
 
-        src = os.path.join(config.origin_GT_path, GT_list[idx])
-        dst = os.path.join(config.train_GT_path, GT_list[idx])
-        copyfile(src, dst)
-
-        printProgressBar(i + 1, num_train, prefix='Producing train set:', suffix='Complete', length=50)
-
-    for i in range(num_valid):
-        idx = Arange.pop()
-
-        src = os.path.join(config.origin_data_path, data_list[idx])
-        dst = os.path.join(config.valid_path, data_list[idx])
-        copyfile(src, dst)
-
-        src = os.path.join(config.origin_GT_path, GT_list[idx])
-        dst = os.path.join(config.valid_GT_path, GT_list[idx])
-        copyfile(src, dst)
-
-        printProgressBar(i + 1, num_valid, prefix='Producing valid set:', suffix='Complete', length=50)
-
-    for i in range(num_test):
-        idx = Arange.pop()
-
-        src = os.path.join(config.origin_data_path, data_list[idx])
-        dst = os.path.join(config.test_path, data_list[idx])
-        copyfile(src, dst)
-
-        src = os.path.join(config.origin_GT_path, GT_list[idx])
-        dst = os.path.join(config.test_GT_path, GT_list[idx])
-        copyfile(src, dst)
-
-        printProgressBar(i + 1, num_test, prefix='Producing test set:', suffix='Complete', length=50)
+        gt_valid_src = os.path.join(config.origin_GT_path, config.valid_fold, filename)
+        gt_valid_dst = os.path.join(config.valid_GT_path, filename)
+        if os.path.exists(gt_valid_src):
+            copyfile(gt_valid_src, gt_valid_dst)
+        else:
+            img = np.load(img_valid_src)
+            gt = np.zeros(img.shape)
+            np.save(gt_valid_dst, gt)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    # model hyper-parameters
-    parser.add_argument('--train_ratio', type=float, default=0.6)
-    parser.add_argument('--valid_ratio', type=float, default=0.2)
-    parser.add_argument('--test_ratio', type=float, default=0.2)
+    # input
+    parser.add_argument('--train_list', type=float, default='/data/train_01.txt')
+    parser.add_argument('--valid_list', type=float, default='/data/valid_01.txt')
+    parser.add_argument('--train_fold', type=float, default='train_01')
+    parser.add_argument('--valid_fold', type=float, default='valid_01')
 
     # data path
-    parser.add_argument('--origin_data_path', type=str, default='../ISIC/dataset/ISIC2018_Task1-2_Training_Input')
-    parser.add_argument('--origin_GT_path', type=str, default='../ISIC/dataset/ISIC2018_Task1_Training_GroundTruth')
-
+    parser.add_argument('--origin_data_path', type=str, default='data/npy/img/')
+    parser.add_argument('--origin_GT_path', type=str, default='data/npy/msk/')
+    # prepared data path
     parser.add_argument('--train_path', type=str, default='./dataset/train/')
     parser.add_argument('--train_GT_path', type=str, default='./dataset/train_GT/')
     parser.add_argument('--valid_path', type=str, default='./dataset/valid/')
     parser.add_argument('--valid_GT_path', type=str, default='./dataset/valid_GT/')
-    parser.add_argument('--test_path', type=str, default='./dataset/test/')
-    parser.add_argument('--test_GT_path', type=str, default='./dataset/test_GT/')
 
     config = parser.parse_args()
     print(config)

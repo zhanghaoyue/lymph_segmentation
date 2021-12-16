@@ -26,8 +26,8 @@ class ImageFolder(data.Dataset):
     def __getitem__(self, index):
         """Reads an image from a file and preprocesses it and returns."""
         image_path = self.image_paths[index]
-        filename = image_path.split('_')[-1][:-len(".jpg")]
-        GT_path = self.GT_paths + 'ISIC_' + filename + '_segmentation.png'
+        filename = image_path.split('_')[-1][:-len(".npy")]
+        GT_path = self.GT_paths + filename + '_seg.npy'
 
         image = Image.open(image_path)
         GT = Image.open(GT_path)
