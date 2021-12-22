@@ -26,18 +26,20 @@ class ImageFolder(data.Dataset):
     def __getitem__(self, index):
         """Reads an image from a file and preprocesses it and returns."""
         image_path = self.image_paths[index]
-        filename = image_path.split('_')[-1][:-len(".npy")]
-        GT_path = self.GT_paths + filename + '_seg.npy'
-
-        image = Image.open(image_path)
-        GT = Image.open(GT_path)
+        GT_path = self.GT_paths + os.path.basename(image_path)
+        im_array = np.load(image_path)
+        GT_array = np.load(GT_path)
+        image = Image.fromarray(im_array.astype(np.uint16), 'I;16')
+        GT = Image.fromarray(GT_array.astype(np.uint16), 'I;16')
+        image = image.resize((self.image_size, self.image_size))
+        GT = GT.resize((self.image_size, self.image_size))
 
         aspect_ratio = image.size[1] / image.size[0]
 
         Transform = []
 
         ResizeRange = random.randint(300, 320)
-        Transform.append(T.Resize((int(ResizeRange * aspect_ratio), ResizeRange)))
+        Transform.append(T.Resize((int(ResizeRange * aspect_ratio), ResizeRange), Image.NEAREST))
         p_transform = random.random()
 
         if (self.mode == 'train') and p_transform <= self.augmentation_prob:
@@ -72,21 +74,23 @@ class ImageFolder(data.Dataset):
                 image = F.vflip(image)
                 GT = F.vflip(GT)
 
-            Transform = T.ColorJitter(brightness=0.2, contrast=0.2, hue=0.02)
+            # Transform = T.ColorJitter(brightness=0.2, contrast=0.2, hue=0.02)
 
             image = Transform(image)
 
             Transform = []
 
-        Transform.append(T.Resize((int(256 * aspect_ratio) - int(256 * aspect_ratio) % 16, 256)))
+        Transform.append(T.Resize((int(256 * aspect_ratio) - int(256 * aspect_ratio) % 16, 256), Image.NEAREST))
         Transform.append(T.ToTensor())
+        Transform.append(T.ConvertImageDtype(torch.float))
         Transform = T.Compose(Transform)
 
         image = Transform(image)
+        image = image.repeat(3, 1, 1)
         GT = Transform(GT)
 
-        Norm_ = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        image = Norm_(image)
+        # Norm_ = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        # image = Norm_(image)
 
         return image, GT
 

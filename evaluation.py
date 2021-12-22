@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 
 # SR : Segmentation Result
@@ -21,8 +22,8 @@ def get_sensitivity(SR, GT, threshold=0.5):
 
     # TP : True Positive
     # FN : False Negative
-    TP = ((SR == 1) + (GT == 1)) == 2
-    FN = ((SR == 0) + (GT == 1)) == 2
+    TP = ((SR == 1).int() + (GT == 1).int()) == 2
+    FN = ((SR == 0).int() + (GT == 1).int()) == 2
 
     SE = float(torch.sum(TP)) / (float(torch.sum(TP + FN)) + 1e-6)
 
@@ -35,8 +36,8 @@ def get_specificity(SR, GT, threshold=0.5):
 
     # TN : True Negative
     # FP : False Positive
-    TN = ((SR == 0) + (GT == 0)) == 2
-    FP = ((SR == 1) + (GT == 0)) == 2
+    TN = ((SR == 0).int() + (GT == 0).int()) == 2
+    FP = ((SR == 1).int() + (GT == 0).int()) == 2
 
     SP = float(torch.sum(TN)) / (float(torch.sum(TN + FP)) + 1e-6)
 
@@ -49,8 +50,8 @@ def get_precision(SR, GT, threshold=0.5):
 
     # TP : True Positive
     # FP : False Positive
-    TP = ((SR == 1) + (GT == 1)) == 2
-    FP = ((SR == 1) + (GT == 0)) == 2
+    TP = ((SR == 1).int() + (GT == 1).int()) == 2
+    FP = ((SR == 1).int() + (GT == 0).int()) == 2
 
     PC = float(torch.sum(TP)) / (float(torch.sum(TP + FP)) + 1e-6)
 
@@ -71,9 +72,10 @@ def get_JS(SR, GT, threshold=0.5):
     # JS : Jaccard similarity
     SR = SR > threshold
     GT = GT == torch.max(GT)
+    sum_int = SR.int() + GT.int()
 
-    Inter = torch.sum((SR + GT) == 2)
-    Union = torch.sum((SR + GT) >= 1)
+    Inter = (SR*GT).sum()
+    Union = torch.sum(sum_int >= 1)
 
     JS = float(Inter) / (float(Union) + 1e-6)
 
@@ -85,9 +87,7 @@ def get_DC(SR, GT, threshold=0.5):
     SR = SR > threshold
     GT = GT == torch.max(GT)
 
-    Inter = torch.sum((SR + GT) == 2)
+    Inter = (SR*GT).sum()
     DC = float(2 * Inter) / (float(torch.sum(SR) + torch.sum(GT)) + 1e-6)
 
     return DC
-
-

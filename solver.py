@@ -6,6 +6,7 @@ import torch
 import torchvision
 from torch import optim
 from torch.autograd import Variable
+from tqdm import tqdm
 import torch.nn.functional as F
 from evaluation import *
 from network import U_Net, R2U_Net, AttU_Net, R2AttU_Net
@@ -13,19 +14,18 @@ import csv
 
 
 class Solver(object):
-    def __init__(self, config, train_loader, valid_loader, test_loader):
+    def __init__(self, config, train_loader, valid_loader):
 
         # Data loader
         self.train_loader = train_loader
         self.valid_loader = valid_loader
-        self.test_loader = test_loader
 
         # Models
         self.unet = None
         self.optimizer = None
         self.img_ch = config.img_ch
         self.output_ch = config.output_ch
-        self.criterion = torch.nn.BCELoss()
+        self.criterion = self.focal_loss
         self.augmentation_prob = config.augmentation_prob
 
         # Hyper-parameters
@@ -86,7 +86,7 @@ class Solver(object):
 
     def update_lr(self, g_lr, d_lr):
         for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
+            param_group['lr'] = self.lr
 
     def reset_grad(self):
         """Zero the gradient buffers."""
@@ -103,6 +103,17 @@ class Solver(object):
         img = img * 255
         return img
 
+    def focal_loss(self, output, target):
+        if target.size() != output.size():
+            target = target.unsqueeze(1)
+        target = target.float()
+        alpha = 0.9
+        gamma = 2.0
+        BCE_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target, reduction='none')
+        pt = -torch.exp(-BCE_loss)
+        F_loss = alpha * (1 - pt) ** gamma * BCE_loss
+        return F_loss.mean()
+
     def train(self):
         """Train encoder, generator and discriminator."""
 
@@ -110,8 +121,8 @@ class Solver(object):
         # ===========================================================================================#
 
         unet_path = os.path.join(self.model_path, '%s-%d-%.4f-%d-%.4f.pkl' % (
-        self.model_type, self.num_epochs, self.lr, self.num_epochs_decay, self.augmentation_prob))
-
+            self.model_type, self.num_epochs, self.lr, self.num_epochs_decay, self.augmentation_prob))
+        print("start training...")
         # U-Net Train
         if os.path.isfile(unet_path):
             # Load the pretrained Encoder
@@ -136,7 +147,7 @@ class Solver(object):
                 DC = 0.  # Dice Coefficient
                 length = 0
 
-                for i, (images, GT) in enumerate(self.train_loader):
+                for i, (images, GT) in tqdm(enumerate(self.train_loader)):
                     # GT : Ground Truth
 
                     images = images.to(self.device)
@@ -144,7 +155,7 @@ class Solver(object):
 
                     # SR : Segmentation Result
                     SR = self.unet(images)
-                    SR_probs = F.sigmoid(SR)
+                    SR_probs = torch.sigmoid(SR)
                     SR_flat = SR_probs.view(SR_probs.size(0), -1)
 
                     GT_flat = GT.view(GT.size(0), -1)
@@ -154,6 +165,7 @@ class Solver(object):
                     # Backprop + optimize
                     self.reset_grad()
                     loss.backward()
+                    # torch.nn.utils.clip_grad_norm(self.unet.parameters(), 0.1)
                     self.optimizer.step()
 
                     acc += get_accuracy(SR, GT)
@@ -164,6 +176,8 @@ class Solver(object):
                     JS += get_JS(SR, GT)
                     DC += get_DC(SR, GT)
                     length += images.size(0)
+                    if i % 1000 == 0:
+                        print('Ep: {} | Iter:{} | Running loss:{:1.4f}'.format(epoch + 1, i, epoch_loss / length))
 
                 acc = acc / length
                 SE = SE / length
@@ -172,12 +186,13 @@ class Solver(object):
                 F1 = F1 / length
                 JS = JS / length
                 DC = DC / length
+                epoch_loss = epoch_loss / length
 
                 # Print the log info
                 print(
                     'Epoch [%d/%d], Loss: %.4f, \n[Training] Acc: %.4f, SE: %.4f, SP: %.4f, PC: %.4f, F1: %.4f, JS: %.4f, DC: %.4f' % (
-                        epoch + 1, self.num_epochs, \
-                        epoch_loss, \
+                        epoch + 1, self.num_epochs,
+                        epoch_loss,
                         acc, SE, SP, PC, F1, JS, DC))
 
                 # Decay learning rate
@@ -223,7 +238,7 @@ class Solver(object):
                 unet_score = JS + DC
 
                 print('[Validation] Acc: %.4f, SE: %.4f, SP: %.4f, PC: %.4f, F1: %.4f, JS: %.4f, DC: %.4f' % (
-                acc, SE, SP, PC, F1, JS, DC))
+                    acc, SE, SP, PC, F1, JS, DC))
 
                 '''
                 torchvision.utils.save_image(images.data.cpu(),
@@ -290,5 +305,3 @@ class Solver(object):
             wr.writerow([self.model_type, acc, SE, SP, PC, F1, JS, DC, self.lr, best_epoch, self.num_epochs,
                          self.num_epochs_decay, self.augmentation_prob])
             f.close()
-
-

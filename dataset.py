@@ -20,13 +20,11 @@ def main(config):
     rm_mkdir(config.train_GT_path)
     rm_mkdir(config.valid_path)
     rm_mkdir(config.valid_GT_path)
-    rm_mkdir(config.test_path)
-    rm_mkdir(config.test_GT_path)
 
-    train_data = open(config.train_list, 'r')
-    valid_data = open(config.valid_list, 'r')
-    lines_train = train_data.readlines()
-    lines_valid = valid_data.readlines()
+    with open(config.train_list) as f:
+        lines_train = f.read().splitlines()
+    with open(config.valid_list) as f:
+        lines_valid = f.read().splitlines()
 
     num_train = len(lines_train)
     num_valid = len(lines_valid)
@@ -35,12 +33,12 @@ def main(config):
     print('\nNum of valid set : ', num_valid)
 
     for filename in lines_train:
-        img_train_src = os.path.join(config.origin_data_path, config.train_fold, filename)
-        img_train_dst = os.path.join(config.train_path, filename)
+        img_train_src = os.path.join(config.origin_data_path, filename)
+        img_train_dst = os.path.join(config.train_path, os.path.basename(filename))
         copyfile(img_train_src, img_train_dst)
 
-        gt_train_src = os.path.join(config.origin_GT_path, config.train_fold, filename)
-        gt_train_dst = os.path.join(config.train_GT_path, filename)
+        gt_train_src = os.path.join(config.origin_GT_path, filename)
+        gt_train_dst = os.path.join(config.train_GT_path, os.path.basename(filename))
         if os.path.exists(gt_train_src):
             copyfile(gt_train_src, gt_train_dst)
         else:
@@ -49,12 +47,12 @@ def main(config):
             np.save(gt_train_dst, gt)
 
     for filename in lines_valid:
-        img_valid_src = os.path.join(config.origin_data_path, config.valid_fold, filename)
-        img_valid_dst = os.path.join(config.valid_path, filename)
+        img_valid_src = os.path.join(config.origin_data_path, filename)
+        img_valid_dst = os.path.join(config.valid_path, os.path.basename(filename))
         copyfile(img_valid_src, img_valid_dst)
 
-        gt_valid_src = os.path.join(config.origin_GT_path, config.valid_fold, filename)
-        gt_valid_dst = os.path.join(config.valid_GT_path, filename)
+        gt_valid_src = os.path.join(config.origin_GT_path, filename)
+        gt_valid_dst = os.path.join(config.valid_GT_path, os.path.basename(filename))
         if os.path.exists(gt_valid_src):
             copyfile(gt_valid_src, gt_valid_dst)
         else:
@@ -67,14 +65,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # input
-    parser.add_argument('--train_list', type=float, default='/data/train_01.txt')
-    parser.add_argument('--valid_list', type=float, default='/data/valid_01.txt')
-    parser.add_argument('--train_fold', type=float, default='train_01')
-    parser.add_argument('--valid_fold', type=float, default='valid_01')
+    parser.add_argument('--train_list', type=str, default='/home/sanford2021/Desktop/lymph/data/txt/train_0.txt')
+    parser.add_argument('--valid_list', type=str, default='/home/sanford2021/Desktop/lymph/data/txt/valid_0.txt')
+    parser.add_argument('--train_fold', type=str, default='train_0')
+    parser.add_argument('--valid_fold', type=str, default='valid_0')
 
     # data path
-    parser.add_argument('--origin_data_path', type=str, default='data/npy/img/')
-    parser.add_argument('--origin_GT_path', type=str, default='data/npy/msk/')
+    parser.add_argument('--origin_data_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/img/')
+    parser.add_argument('--origin_GT_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/msk/')
     # prepared data path
     parser.add_argument('--train_path', type=str, default='./dataset/train/')
     parser.add_argument('--train_GT_path', type=str, default='./dataset/train_GT/')

@@ -4,6 +4,9 @@ from solver import Solver
 from data_loader import get_loader
 from torch.backends import cudnn
 import random
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 def main(config):
@@ -24,7 +27,7 @@ def main(config):
 
     lr = random.random() * 0.0005 + 0.0000005
     augmentation_prob = random.random() * 0.7
-    epoch = random.choice([100, 150, 200, 250])
+    epoch = random.choice([100, 150])
     decay_ratio = random.random() * 0.8
     decay_epoch = int(epoch * decay_ratio)
 
@@ -47,14 +50,8 @@ def main(config):
                               num_workers=config.num_workers,
                               mode='valid',
                               augmentation_prob=0.)
-    test_loader = get_loader(image_path=config.test_path,
-                             image_size=config.image_size,
-                             batch_size=config.batch_size,
-                             num_workers=config.num_workers,
-                             mode='test',
-                             augmentation_prob=0.)
 
-    solver = Solver(config, train_loader, valid_loader, test_loader)
+    solver = Solver(config, train_loader, valid_loader)
 
     # Train and sample the images
     if config.mode == 'train':
@@ -76,7 +73,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--num_epochs_decay', type=int, default=70)
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--num_workers', type=int, default=8)
+    parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--lr', type=float, default=0.0002)
     parser.add_argument('--beta1', type=float, default=0.5)  # momentum1 in Adam
     parser.add_argument('--beta2', type=float, default=0.999)  # momentum2 in Adam
@@ -91,7 +88,6 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='./models')
     parser.add_argument('--train_path', type=str, default='./dataset/train/')
     parser.add_argument('--valid_path', type=str, default='./dataset/valid/')
-    parser.add_argument('--test_path', type=str, default='./dataset/test/')
     parser.add_argument('--result_path', type=str, default='./result/')
 
     parser.add_argument('--cuda_idx', type=int, default=1)
