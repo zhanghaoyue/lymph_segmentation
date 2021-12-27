@@ -10,22 +10,56 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from evaluation import *
 from network import U_Net, R2U_Net, AttU_Net, R2AttU_Net
+from losses import *
 import csv
 
 
+def focal_loss(output, target):
+    if target.size() != output.size():
+        target = target.unsqueeze(1)
+    target = target.float()
+    alpha = 0.9
+    gamma = 2.0
+    BCE_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target, reduction='none')
+    pt = -torch.exp(-BCE_loss)
+    F_loss = alpha * (1 - pt) ** gamma * BCE_loss
+    return F_loss.mean()
+
+
+def gd_loss(output, target):
+    if target.size() != output.size():
+        target = target.unsqueeze(1)
+    target = target.float()
+    target_sum = target.sum(-1)
+    class_weights = Variable(1. / (target_sum * target_sum).clamp(min=1e-5), requires_grad=False)
+    intersect = (output * target).sum(-1) * class_weights
+    intersect = intersect.sum()
+
+    denominator = ((output + target).sum(-1) * class_weights).sum()
+
+    return - 2. * intersect / denominator.clamp(min=1e-5)
+
+
+def combo_loss(output, target):
+    alpha = 0.5
+    beta = 0.5
+    return alpha * focal_loss(output, target) + beta * gd_loss(output, target)
+
+
 class Solver(object):
-    def __init__(self, config, train_loader, valid_loader):
+    def __init__(self, config, train_loader, valid_loader, test_loader):
 
         # Data loader
         self.train_loader = train_loader
         self.valid_loader = valid_loader
+        self.test_loader = test_loader
 
         # Models
         self.unet = None
         self.optimizer = None
         self.img_ch = config.img_ch
         self.output_ch = config.output_ch
-        self.criterion = self.focal_loss
+        self.criterion = combo_loss
         self.augmentation_prob = config.augmentation_prob
 
         # Hyper-parameters
@@ -102,17 +136,6 @@ class Solver(object):
         img = (x[:, 0, :, :] > x[:, 1, :, :]).float()
         img = img * 255
         return img
-
-    def focal_loss(self, output, target):
-        if target.size() != output.size():
-            target = target.unsqueeze(1)
-        target = target.float()
-        alpha = 0.9
-        gamma = 2.0
-        BCE_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target, reduction='none')
-        pt = -torch.exp(-BCE_loss)
-        F_loss = alpha * (1 - pt) ** gamma * BCE_loss
-        return F_loss.mean()
 
     def train(self):
         """Train encoder, generator and discriminator."""
@@ -240,18 +263,6 @@ class Solver(object):
                 print('[Validation] Acc: %.4f, SE: %.4f, SP: %.4f, PC: %.4f, F1: %.4f, JS: %.4f, DC: %.4f' % (
                     acc, SE, SP, PC, F1, JS, DC))
 
-                '''
-                torchvision.utils.save_image(images.data.cpu(),
-                                            os.path.join(self.result_path,
-                                                        '%s_valid_%d_image.png'%(self.model_type,epoch+1)))
-                torchvision.utils.save_image(SR.data.cpu(),
-                                            os.path.join(self.result_path,
-                                                        '%s_valid_%d_SR.png'%(self.model_type,epoch+1)))
-                torchvision.utils.save_image(GT.data.cpu(),
-                                            os.path.join(self.result_path,
-                                                        '%s_valid_%d_GT.png'%(self.model_type,epoch+1)))
-                '''
-
                 # Save Best U-Net model
                 if unet_score > best_unet_score:
                     best_unet_score = unet_score
@@ -277,7 +288,7 @@ class Solver(object):
             JS = 0.  # Jaccard Similarity
             DC = 0.  # Dice Coefficient
             length = 0
-            for i, (images, GT) in enumerate(self.valid_loader):
+            for i, (images, GT) in enumerate(self.test_loader):
                 images = images.to(self.device)
                 GT = GT.to(self.device)
                 SR = F.sigmoid(self.unet(images))
@@ -299,6 +310,8 @@ class Solver(object):
             JS = JS / length
             DC = DC / length
             unet_score = JS + DC
+            print('[test] Acc: %.4f, PC: %.4f, JS: %.4f, DC: %.4f, unet_score: %.4f' % (
+                acc, PC, JS, DC, unet_score))
 
             f = open(os.path.join(self.result_path, 'result.csv'), 'a', encoding='utf-8', newline='')
             wr = csv.writer(f)

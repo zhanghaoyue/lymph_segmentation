@@ -30,7 +30,7 @@ def main(config):
     num_valid = len(lines_valid)
 
     print('\nNum of train set : ', num_train)
-    print('\nNum of valid set : ', num_valid)
+    print('\nNum of test set : ', num_valid)
 
     for filename in lines_train:
         img_train_src = os.path.join(config.origin_data_path, filename)
@@ -38,13 +38,14 @@ def main(config):
         copyfile(img_train_src, img_train_dst)
 
         gt_train_src = os.path.join(config.origin_GT_path, filename)
-        gt_train_dst = os.path.join(config.train_GT_path, os.path.basename(filename))
+        gt_train_dst_pos = os.path.join(config.train_GT_path, 'pos_', os.path.basename(filename))
+        gt_train_dst_neg = os.path.join(config.train_GT_path, 'neg_', os.path.basename(filename))
         if os.path.exists(gt_train_src):
-            copyfile(gt_train_src, gt_train_dst)
+            copyfile(gt_train_src, gt_train_dst_pos)
         else:
             img = np.load(img_train_src)
             gt = np.zeros(img.shape)
-            np.save(gt_train_dst, gt)
+            np.save(gt_train_dst_neg, gt)
 
     for filename in lines_valid:
         img_valid_src = os.path.join(config.origin_data_path, filename)
@@ -52,13 +53,14 @@ def main(config):
         copyfile(img_valid_src, img_valid_dst)
 
         gt_valid_src = os.path.join(config.origin_GT_path, filename)
-        gt_valid_dst = os.path.join(config.valid_GT_path, os.path.basename(filename))
+        gt_valid_dst_pos = os.path.join(config.valid_GT_path, 'pos_', os.path.basename(filename))
+        gt_valid_dst_neg = os.path.join(config.valid_GT_path, 'neg_', os.path.basename(filename))
         if os.path.exists(gt_valid_src):
-            copyfile(gt_valid_src, gt_valid_dst)
+            copyfile(gt_valid_src, gt_valid_dst_pos)
         else:
             img = np.load(img_valid_src)
             gt = np.zeros(img.shape)
-            np.save(gt_valid_dst, gt)
+            np.save(gt_valid_dst_neg, gt)
 
 
 if __name__ == '__main__':
