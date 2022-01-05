@@ -10,7 +10,7 @@ from PIL import Image
 
 
 class ImageFolder(data.Dataset):
-    def __init__(self, root, image_size=224, mode='train', augmentation_prob=0.4):
+    def __init__(self, root, image_size=112, mode='train', augmentation_prob=0.4):
         """Initializes image paths and preprocessing module."""
         self.root = root
 
@@ -106,6 +106,6 @@ def get_loader(image_path, image_size, batch_size, sampler, num_workers=2, mode=
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batch_size,
                                   sampler=sampler,
-                                  shuffle=True,
+                                  shuffle=False,
                                   num_workers=num_workers)
     return data_loader

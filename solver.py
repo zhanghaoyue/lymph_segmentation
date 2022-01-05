@@ -18,7 +18,7 @@ def focal_loss(output, target):
     if target.size() != output.size():
         target = target.unsqueeze(1)
     target = target.float()
-    alpha = 0.9
+    alpha = 0.25
     gamma = 2.0
     BCE_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target, reduction='none')
     pt = -torch.exp(-BCE_loss)
@@ -41,8 +41,8 @@ def gd_loss(output, target):
 
 
 def combo_loss(output, target):
-    alpha = 0.5
-    beta = 0.5
+    alpha = 5
+    beta = 3
     return alpha * focal_loss(output, target) + beta * gd_loss(output, target)
 
 
@@ -89,7 +89,9 @@ class Solver(object):
     def build_model(self):
         """Build generator and discriminator."""
         if self.model_type == 'U_Net':
-            self.unet = U_Net(img_ch=3, output_ch=1)
+            # self.unet = U_Net(img_ch=3, output_ch=1)
+            self.unet = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
+                                   in_channels=3, out_channels=1, init_features=32, pretrained=True)
         elif self.model_type == 'R2U_Net':
             self.unet = R2U_Net(img_ch=3, output_ch=1, t=self.t)
         elif self.model_type == 'AttU_Net':
@@ -191,13 +193,13 @@ class Solver(object):
                     # torch.nn.utils.clip_grad_norm(self.unet.parameters(), 0.1)
                     self.optimizer.step()
 
-                    acc += get_accuracy(SR, GT)
-                    SE += get_sensitivity(SR, GT)
-                    SP += get_specificity(SR, GT)
-                    PC += get_precision(SR, GT)
-                    F1 += get_F1(SR, GT)
-                    JS += get_JS(SR, GT)
-                    DC += get_DC(SR, GT)
+                    acc += get_accuracy(SR_probs, GT)
+                    SE += get_sensitivity(SR_probs, GT)
+                    SP += get_specificity(SR_probs, GT)
+                    PC += get_precision(SR_probs, GT)
+                    F1 += get_F1(SR_probs, GT)
+                    JS += get_JS(SR_probs, GT)
+                    DC += get_DC(SR_probs, GT)
                     length += images.size(0)
                     if i % 1000 == 0:
                         print('Ep: {} | Iter:{} | Running loss:{:1.4f}'.format(epoch + 1, i, epoch_loss / length))
@@ -310,8 +312,8 @@ class Solver(object):
             JS = JS / length
             DC = DC / length
             unet_score = JS + DC
-            print('[test] Acc: %.4f, PC: %.4f, JS: %.4f, DC: %.4f, unet_score: %.4f' % (
-                acc, PC, JS, DC, unet_score))
+            print('[test] Acc: %.4f,SE: %.4f, SP: %.4f., PC: %.4f, JS: %.4f, DC: %.4f, unet_score: %.4f' % (
+                acc, SE, SP, PC, JS, DC, unet_score))
 
             f = open(os.path.join(self.result_path, 'result.csv'), 'a', encoding='utf-8', newline='')
             wr = csv.writer(f)

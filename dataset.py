@@ -14,9 +14,16 @@ def rm_mkdir(dir_path):
         print('Remove path - %s' % dir_path)
     os.makedirs(dir_path)
     print('Create path - %s' % dir_path)
-    if os.path.exists(dir_path + '_balanced'):
-        shutil.rmtree(dir_path)
-    os.makedirs(dir_path + '_balanced')
+    if os.path.exists(str(dir_path) + '_balanced'):
+        shutil.rmtree(str(dir_path) + '_balanced')
+        print('Remove path - %s'% str(dir_path) + '_balanced')
+    os.makedirs(str(dir_path) + '_balanced')
+    print('Create path - %s' % str(dir_path) + '_balanced')
+    if os.path.exists(str(dir_path) + '_pos'):
+        shutil.rmtree(str(dir_path) + '_pos')
+        print('Remove path - %s'% str(dir_path) + '_pos')
+    os.makedirs(str(dir_path) + '_pos')
+    print('Create path - %s' % str(dir_path) + '_pos')
 
 
 def main(config):
@@ -45,16 +52,18 @@ def main(config):
         # GT copyto path and rename positive and negative cases
         gt_train_dst_pos = os.path.join(config.train_GT_path, 'pos_' + os.path.basename(filename))
         gt_train_dst_neg = os.path.join(config.train_GT_path, 'neg_' + os.path.basename(filename))
-        gt_train_dst_neg_balanced = os.path.join(config.train_GT_path + '_balanced',
-                                                 'neg_' + os.path.basename(filename))
+        gt_train_dst_pos_balanced = os.path.join(config.train_GT_path + '_balanced',
+                                                 'pos_' + os.path.basename(filename))
         if os.path.exists(gt_train_src):
             copyfile(gt_train_src, gt_train_dst_pos)
             copyfile(img_train_src, os.path.join(config.train_path, 'pos_' + os.path.basename(filename)))
+            copyfile(gt_train_src, gt_train_dst_pos_balanced)
+            copyfile(img_train_src, os.path.join(config.train_path+'_pos', 'pos_' + os.path.basename(filename)))
+            copyfile(gt_train_src, os.path.join(config.train_GT_path + '_pos', 'pos_' + os.path.basename(filename)))
         else:
             img = np.load(img_train_src)
             gt = np.zeros(img.shape)
             np.save(gt_train_dst_neg, gt)
-            np.save(gt_train_dst_neg_balanced, gt)
             copyfile(img_train_src, os.path.join(config.train_path, 'neg_' + os.path.basename(filename)))
 
     for filename in lines_valid:
@@ -63,39 +72,45 @@ def main(config):
         gt_valid_src = os.path.join(config.origin_GT_path, filename)
         gt_valid_dst_pos = os.path.join(config.valid_GT_path, 'pos_' + os.path.basename(filename))
         gt_valid_dst_neg = os.path.join(config.valid_GT_path, 'neg_' + os.path.basename(filename))
-        gt_valid_dst_neg_balanced = os.path.join(config.train_GT_path + '_balanced',
-                                                 'neg_' + os.path.basename(filename))
+        gt_valid_dst_pos_balanced = os.path.join(config.valid_GT_path + '_balanced',
+                                                 'pos_' + os.path.basename(filename))
         if os.path.exists(gt_valid_src):
             copyfile(gt_valid_src, gt_valid_dst_pos)
             copyfile(img_valid_src, os.path.join(config.valid_path, 'pos_' + os.path.basename(filename)))
+            copyfile(gt_valid_src, gt_valid_dst_pos_balanced)
+            copyfile(img_valid_src, os.path.join(config.valid_path + '_pos', 'pos_' + os.path.basename(filename)))
+            copyfile(gt_valid_src, os.path.join(config.valid_GT_path+'_pos', 'pos_' + os.path.basename(filename)))
         else:
             img = np.load(img_valid_src)
             gt = np.zeros(img.shape)
             np.save(gt_valid_dst_neg, gt)
-            np.save(gt_valid_dst_neg_balanced, gt)
             copyfile(img_valid_src, os.path.join(config.valid_path, 'neg_' + os.path.basename(filename)))
 
     # make balanced folder for training data
-    _, _, train_GT_neg_balanced = next(os.walk(config.train_GT_path + '_balanced'))
-    neg_size = len(train_GT_neg_balanced)
+    _, _, train_GT_pos_balanced = next(os.walk(config.train_GT_path + '_balanced'))
+    pos_size = len(train_GT_pos_balanced)
+    print("train pos size: ")
+    print(pos_size)
     pos_files = [filename for filename in os.listdir(config.train_GT_path) if filename.startswith('pos_')]
     neg_files = [filename for filename in os.listdir(config.train_GT_path) if filename.startswith('neg_')]
-    for file in neg_files:
+    for file in pos_files:
         copyfile(os.path.join(config.train_path, file), os.path.join(config.train_path+'_balanced', file))
-    sampled_pos_file = sample(pos_files, neg_size)
-    for file in sampled_pos_file:
+    sampled_neg_file = sample(neg_files, pos_size)
+    for file in sampled_neg_file:
         copyfile(os.path.join(config.train_GT_path, file), os.path.join(config.train_GT_path+'_balanced', file))
         copyfile(os.path.join(config.train_path, file), os.path.join(config.train_path+'_balanced', file))
 
     # make balanced folder for testing data
-    _, _, valid_GT_neg_balanced = next(os.walk(config.valid_GT_path + '_balanced'))
-    neg_size = len(valid_GT_neg_balanced)
+    _, _, valid_GT_pos_balanced = next(os.walk(config.valid_GT_path + '_balanced'))
+    pos_size = len(valid_GT_pos_balanced)
+    print("valid pos size:")
+    print(pos_size)
     pos_files = [filename for filename in os.listdir(config.valid_GT_path) if filename.startswith('pos_')]
     neg_files = [filename for filename in os.listdir(config.valid_GT_path) if filename.startswith('neg_')]
-    for file in neg_files:
+    for file in pos_files:
         copyfile(os.path.join(config.valid_path, file), os.path.join(config.valid_path + '_balanced', file))
-    sampled_pos_file = sample(pos_files, neg_size)
-    for file in sampled_pos_file:
+    sampled_neg_file = sample(neg_files, pos_size)
+    for file in sampled_neg_file:
         copyfile(os.path.join(config.valid_GT_path, file), os.path.join(config.valid_GT_path + '_balanced', file))
         copyfile(os.path.join(config.valid_path, file), os.path.join(config.valid_path + '_balanced', file))
 
@@ -113,10 +128,10 @@ if __name__ == '__main__':
     parser.add_argument('--origin_data_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/img/')
     parser.add_argument('--origin_GT_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/msk/')
     # prepared data path
-    parser.add_argument('--train_path', type=str, default='./dataset/train/')
-    parser.add_argument('--train_GT_path', type=str, default='./dataset/train_GT/')
-    parser.add_argument('--valid_path', type=str, default='./dataset/valid/')
-    parser.add_argument('--valid_GT_path', type=str, default='./dataset/valid_GT/')
+    parser.add_argument('--train_path', type=str, default='./dataset/train')
+    parser.add_argument('--train_GT_path', type=str, default='./dataset/train_GT')
+    parser.add_argument('--valid_path', type=str, default='./dataset/valid')
+    parser.add_argument('--valid_GT_path', type=str, default='./dataset/valid_GT')
 
     config = parser.parse_args()
     print(config)
