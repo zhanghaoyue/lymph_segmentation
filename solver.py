@@ -1,4 +1,6 @@
 import os
+from collections import OrderedDict
+import collections
 import numpy as np
 import time
 import datetime
@@ -10,7 +12,10 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from evaluation import *
 from network import U_Net, R2U_Net, AttU_Net, R2AttU_Net
+from detection_nets import get_detection_model
 from losses import *
+from torchvision.ops import box_iou
+import misc
 import csv
 
 
@@ -55,8 +60,9 @@ class Solver(object):
         self.test_loader = test_loader
 
         # Models
-        self.unet = None
+        self.net = None
         self.optimizer = None
+        self.scheduler = None
         self.img_ch = config.img_ch
         self.output_ch = config.output_ch
         self.criterion = combo_loss
@@ -83,6 +89,22 @@ class Solver(object):
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_type = config.model_type
+
+        # LR
+        self.cycle_r = False
+        self.gap_epoch = 10
+        self.patience = 3
+        self.cos_lr = False
+        self.Tmax = 20
+        self.lr_gap = 100
+
+        # detection range
+        self.cls_th = 0.05
+        self.nms_th = 0.01
+        self.s_th = 0.05
+        self.max_dets = 100
+        self.iou_th = 0.3
+
         self.t = config.t
         self.build_model()
 
@@ -90,18 +112,25 @@ class Solver(object):
         """Build generator and discriminator."""
         if self.model_type == 'U_Net':
             # self.unet = U_Net(img_ch=3, output_ch=1)
-            self.unet = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-                                   in_channels=3, out_channels=1, init_features=32, pretrained=True)
+            self.net = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
+                                      in_channels=3, out_channels=1, init_features=32, pretrained=True)
         elif self.model_type == 'R2U_Net':
-            self.unet = R2U_Net(img_ch=3, output_ch=1, t=self.t)
+            self.net = R2U_Net(img_ch=3, output_ch=1, t=self.t)
         elif self.model_type == 'AttU_Net':
-            self.unet = AttU_Net(img_ch=3, output_ch=1)
+            self.net = AttU_Net(img_ch=3, output_ch=1)
         elif self.model_type == 'R2AttU_Net':
-            self.unet = R2AttU_Net(img_ch=3, output_ch=1, t=self.t)
+            self.net = R2AttU_Net(img_ch=3, output_ch=1, t=self.t)
+        elif self.model_type == 'RCNN':
+            self.net = get_detection_model(num_classes=2)
 
-        self.optimizer = optim.Adam(list(self.unet.parameters()),
+        self.optimizer = optim.Adam(list(self.net.parameters()),
                                     self.lr, [self.beta1, self.beta2])
-        self.unet.to(self.device)
+        if self.cos_lr:
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.Tmax,
+                                                                        eta_min=self.lr / self.lr_gap)
+        else:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'max', patience=self.patience)
+        self.net.to(self.device)
 
     # self.print_network(self.unet, self.model_type)
 
@@ -126,7 +155,7 @@ class Solver(object):
 
     def reset_grad(self):
         """Zero the gradient buffers."""
-        self.unet.zero_grad()
+        self.net.zero_grad()
 
     def compute_accuracy(self, SR, GT):
         SR_flat = SR.view(-1)
@@ -151,74 +180,58 @@ class Solver(object):
         # U-Net Train
         if os.path.isfile(unet_path):
             # Load the pretrained Encoder
-            self.unet.load_state_dict(torch.load(unet_path))
+            self.net.load_state_dict(torch.load(unet_path))
             print('%s is Successfully Loaded from %s' % (self.model_type, unet_path))
         else:
             # Train for Encoder
             lr = self.lr
-            best_unet_score = 0.
+            best_net = None
+            epoch_save = 0
+            best_metric = 0
+            lr_change = 0
+            loss_hist = collections.deque(maxlen=500)
 
             for epoch in range(self.num_epochs):
+                tmp_epoch = epoch + 1
+                tmp_lr = self.optimizer.__getstate__()['param_groups'][0]['lr']
+                if self.cycle_r > 0:
+                    if epoch % (2 * self.Tmax) == 0:
+                        best_net = None
+                        best_metric_list = np.zeros((2 - 1))
+                        best_metric = 0
+                        min_loss = 10
 
-                self.unet.train(True)
-                epoch_loss = 0
-
-                acc = 0.  # Accuracy
-                SE = 0.  # Sensitivity (Recall)
-                SP = 0.  # Specificity
-                PC = 0.  # Precision
-                F1 = 0.  # F1 Score
-                JS = 0.  # Jaccard Similarity
-                DC = 0.  # Dice Coefficient
-                length = 0
+                else:
+                    if tmp_epoch > epoch_save + self.gap_epoch:
+                        break
+                    if lr_change == 2:
+                        break
+                self.net.train(True)
 
                 for i, (images, GT) in tqdm(enumerate(self.train_loader)):
                     # GT : Ground Truth
 
-                    images = images.to(self.device)
-                    GT = GT.to(self.device)
+                    im = list(image.to(self.device) for image in images)
+                    label = [{k: v.to(self.device) for k, v in t.items()} for t in GT]
 
-                    # SR : Segmentation Result
-                    SR = self.unet(images)
-                    SR_probs = torch.sigmoid(SR)
-                    SR_flat = SR_probs.view(SR_probs.size(0), -1)
+                    if epoch == 0 and i == 0:
+                        print('input size:', im[0].shape)
+                    # forward
+                    loss_dict = self.net(im, label)
+                    loss = sum(ls for ls in loss_dict.values())
 
-                    GT_flat = GT.view(GT.size(0), -1)
-                    loss = self.criterion(SR_flat, GT_flat)
-                    epoch_loss += loss.item()
+                    if bool(loss == 0):
+                        continue
 
-                    # Backprop + optimize
-                    self.reset_grad()
-                    loss.backward()
-                    # torch.nn.utils.clip_grad_norm(self.unet.parameters(), 0.1)
+                    self.optimizer.zero_grad()
+                    loss.backward(retain_graph=True)
+                    torch.nn.utils.clip_grad_norm_(self.net.parameters(), 0.1)
                     self.optimizer.step()
-
-                    acc += get_accuracy(SR_probs, GT)
-                    SE += get_sensitivity(SR_probs, GT)
-                    SP += get_specificity(SR_probs, GT)
-                    PC += get_precision(SR_probs, GT)
-                    F1 += get_F1(SR_probs, GT)
-                    JS += get_JS(SR_probs, GT)
-                    DC += get_DC(SR_probs, GT)
-                    length += images.size(0)
-                    if i % 1000 == 0:
-                        print('Ep: {} | Iter:{} | Running loss:{:1.4f}'.format(epoch + 1, i, epoch_loss / length))
-
-                acc = acc / length
-                SE = SE / length
-                SP = SP / length
-                PC = PC / length
-                F1 = F1 / length
-                JS = JS / length
-                DC = DC / length
-                epoch_loss = epoch_loss / length
-
-                # Print the log info
-                print(
-                    'Epoch [%d/%d], Loss: %.4f, \n[Training] Acc: %.4f, SE: %.4f, SP: %.4f, PC: %.4f, F1: %.4f, JS: %.4f, DC: %.4f' % (
-                        epoch + 1, self.num_epochs,
-                        epoch_loss,
-                        acc, SE, SP, PC, F1, JS, DC))
+                    loss_hist.append(float(loss))
+                    if i % 50 == 0:
+                        print(
+                            'Ep: {} | Iter: {} | Running loss: {:1.4f}'.format(
+                                tmp_epoch, i, np.mean(loss_hist)))
 
                 # Decay learning rate
                 if (epoch + 1) > (self.num_epochs - self.num_epochs_decay):
@@ -226,97 +239,122 @@ class Solver(object):
                     for param_group in self.optimizer.param_groups:
                         param_group['lr'] = lr
                     print('Decay learning rate to lr: {}.'.format(lr))
-
+                torch.cuda.empty_cache()
                 # ===================================== Validation ====================================#
-                self.unet.train(False)
-                self.unet.eval()
+                self.net.train(False)
+                self.net.eval()
+                val_data_num = self.valid_loader.__len__
+                data_length = val_data_num
+                all_detections = [None for j in range(data_length)]
+                all_annotations = [None for j in range(data_length)]
 
-                acc = 0.  # Accuracy
-                SE = 0.  # Sensitivity (Recall)
-                SP = 0.  # Specificity
-                PC = 0.  # Precision
-                F1 = 0.  # F1 Score
-                JS = 0.  # Jaccard Similarity
-                DC = 0.  # Dice Coefficient
-                length = 0
-                for i, (images, GT) in enumerate(self.valid_loader):
-                    images = images.to(self.device)
-                    GT = GT.to(self.device)
-                    SR = F.sigmoid(self.unet(images))
-                    acc += get_accuracy(SR, GT)
-                    SE += get_sensitivity(SR, GT)
-                    SP += get_specificity(SR, GT)
-                    PC += get_precision(SR, GT)
-                    F1 += get_F1(SR, GT)
-                    JS += get_JS(SR, GT)
-                    DC += get_DC(SR, GT)
+                with torch.no_grad():
+                    for i, (images, GT) in enumerate(self.valid_loader):
+                        im = list(image.cuda() for image in images)
+                        if epoch == 0 and i == 0:
+                            print('val input size:', im[0].shape)
 
-                    length += images.size(0)
+                        outputs = self.net(im)
 
-                acc = acc / length
-                SE = SE / length
-                SP = SP / length
-                PC = PC / length
-                F1 = F1 / length
-                JS = JS / length
-                DC = DC / length
-                unet_score = JS + DC
+                        scores = outputs[0]['scores'].detach().cpu().numpy()
+                        labels = outputs[0]['labels'].detach().cpu().numpy()
+                        boxes = outputs[0]['boxes'].detach().cpu().numpy()
 
-                print('[Validation] Acc: %.4f, SE: %.4f, SP: %.4f, PC: %.4f, F1: %.4f, JS: %.4f, DC: %.4f' % (
-                    acc, SE, SP, PC, F1, JS, DC))
+                        indices = np.where(scores > self.s_th)[0]
 
-                # Save Best U-Net model
-                if unet_score > best_unet_score:
-                    best_unet_score = unet_score
-                    best_epoch = epoch
-                    best_unet = self.unet.state_dict()
-                    print('Best %s model score : %.4f' % (self.model_type, best_unet_score))
-                    torch.save(best_unet, unet_path)
+                        if indices.shape[0] > 0:
+                            scores = scores[indices]
+                            boxes = boxes[indices]
+                            labels = labels[indices]
+                            # find the order with which to sort the scores
+                            scores_sort = np.argsort(-scores)[:self.max_dets]
+                            # select detections
+                            image_boxes = boxes[scores_sort]
+                            image_scores = scores[scores_sort]
+                            image_labels = labels[scores_sort]
+                            image_detections = np.concatenate(
+                                [image_boxes, np.expand_dims(image_scores, axis=1),
+                                 np.expand_dims(image_labels, axis=1)],
+                                axis=1)
+                            all_detections[i] = image_detections[:, :-1]
+                        else:
+                            all_detections[i] = np.zeros((0, 5))
+                            # if all_detections[i].shape[0] != 0:
+                            #     print(all_detections[i])
+                            ###########################################################
+                            ##################### Get annotations #####################
+                            annotations = GT[0]["boxes"].detach().cpu().numpy()
+                            all_annotations[i] = annotations
+                        ###########################################################
+                    false_positives = np.zeros((0,))
+                    true_positives = np.zeros((0,))
+                    scores = np.zeros((0,))
+                    num_annotations = 0.0
 
-            # ===================================== Test ====================================#
-            del self.unet
-            del best_unet
-            self.build_model()
-            self.unet.load_state_dict(torch.load(unet_path))
+                    for i in range(data_length):
+                        detections = all_detections[i]
+                        annotations = all_annotations[i]
+                        num_annotations += annotations.shape[0]
+                        detected_annotations = []
+                        for d in detections:
+                            scores = np.append(scores, d[4])
+                            if annotations.shape[0] == 0:
+                                false_positives = np.append(false_positives, 1)
+                                true_positives = np.append(true_positives, 0)
+                                continue
+                            d_tensor = torch.tensor(d[:4][np.newaxis])
+                            a_tensor = torch.tensor(annotations)
+                            overlaps = box_iou(d_tensor, a_tensor).numpy()
+                            assigned_annotation = np.argmax(overlaps, axis=1)
+                            max_overlap = overlaps[0, assigned_annotation]
+                            if max_overlap >= self.iou_th and assigned_annotation not in detected_annotations:
+                                false_positives = np.append(false_positives, 0)
+                                true_positives = np.append(true_positives, 1)
+                                detected_annotations.append(assigned_annotation)
+                            else:
+                                false_positives = np.append(false_positives, 1)
+                                true_positives = np.append(true_positives, 0)
+                    if len(false_positives) == 0 and len(true_positives) == 0:
+                        print('No detection')
+                    else:
+                        # sort by score
+                        indices = np.argsort(-scores)
+                        scores = scores[indices]
+                        false_positives = false_positives[indices]
+                        true_positives = true_positives[indices]
+                        # compute false positives and true positives
+                        false_positives = np.cumsum(false_positives)
+                        true_positives = np.cumsum(true_positives)
+                        # compute recall and precision
+                        recall = true_positives / num_annotations
+                        precision = true_positives / np.maximum(true_positives + false_positives,
+                                                                np.finfo(np.float64).eps)
+                        # compute average precision
+                        average_precision = misc.compute_ap(recall, precision)
+                        print('mAP: {}'.format(average_precision))
+                        print("Precision: ", precision[-1])
+                        print("Recall: ", recall[-1])
+                        if average_precision > best_metric:
+                            best_metric = average_precision
+                            epoch_save = tmp_epoch
+                            save_dict = {}
+                            save_dict['net'] = self.net
+                            torch.save(save_dict, self.model_path + 'K%s_%s_AP_%.4f_Pr_%.4f_Re_%.4f.pkl' %
+                                       (k, str(epoch_save).rjust(3, '0'), best_metric, precision[-1], recall[-1]))
 
-            self.unet.train(False)
-            self.unet.eval()
+                            del save_dict
 
-            acc = 0.  # Accuracy
-            SE = 0.  # Sensitivity (Recall)
-            SP = 0.  # Specificity
-            PC = 0.  # Precision
-            F1 = 0.  # F1 Score
-            JS = 0.  # Jaccard Similarity
-            DC = 0.  # Dice Coefficient
-            length = 0
-            for i, (images, GT) in enumerate(self.test_loader):
-                images = images.to(self.device)
-                GT = GT.to(self.device)
-                SR = F.sigmoid(self.unet(images))
-                acc += get_accuracy(SR, GT)
-                SE += get_sensitivity(SR, GT)
-                SP += get_specificity(SR, GT)
-                PC += get_precision(SR, GT)
-                F1 += get_F1(SR, GT)
-                JS += get_JS(SR, GT)
-                DC += get_DC(SR, GT)
-
-                length += images.size(0)
-
-            acc = acc / length
-            SE = SE / length
-            SP = SP / length
-            PC = PC / length
-            F1 = F1 / length
-            JS = JS / length
-            DC = DC / length
-            unet_score = JS + DC
-            print('[test] Acc: %.4f,SE: %.4f, SP: %.4f., PC: %.4f, JS: %.4f, DC: %.4f, unet_score: %.4f' % (
-                acc, SE, SP, PC, JS, DC, unet_score))
-
-            f = open(os.path.join(self.result_path, 'result.csv'), 'a', encoding='utf-8', newline='')
-            wr = csv.writer(f)
-            wr.writerow([self.model_type, acc, SE, SP, PC, F1, JS, DC, self.lr, best_epoch, self.num_epochs,
-                         self.num_epochs_decay, self.augmentation_prob])
-            f.close()
+                            print('====================== model save ========================')
+                    if self.cos_lr:
+                        self.scheduler.step()
+                    else:
+                        self.scheduler.step(best_metric)
+                        # 经过学习率策略后的 lr
+                        # 如果有变化，记录变化情况
+                    before_lr = self.optimizer.__getstate__()['param_groups'][0]['lr']
+                    if before_lr != tmp_lr:
+                        epoch_save = tmp_epoch
+                        lr_change += 1
+                        print('================== lr change to %.6f ==================' % before_lr)
+                    # 清除缓存，减少训练中内存占用
+                    torch.cuda.empty_cache()

@@ -126,7 +126,7 @@ if __name__ == '__main__':
 
     # data path
     parser.add_argument('--origin_data_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/img/')
-    parser.add_argument('--origin_GT_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/msk/')
+    parser.add_argument('--origin_GT_path', type=str, default='/home/sanford2021/Desktop/lymph/data/npy/detect/')
     # prepared data path
     parser.add_argument('--train_path', type=str, default='./dataset/train')
     parser.add_argument('--train_GT_path', type=str, default='./dataset/train_GT')

@@ -13,8 +13,8 @@ warnings.filterwarnings("ignore")
 
 def main(config):
     cudnn.benchmark = True
-    if config.model_type not in ['U_Net', 'R2U_Net', 'AttU_Net', 'R2AttU_Net']:
-        print('ERROR!! model_type should be selected in U_Net/R2U_Net/AttU_Net/R2AttU_Net')
+    if config.model_type not in ['U_Net', 'R2U_Net', 'AttU_Net', 'R2AttU_Net', 'RCNN']:
+        print('ERROR!! model_type should be selected in U_Net/R2U_Net/AttU_Net/R2AttU_Net/RCNN')
         print('Your input for model_type was %s' % config.model_type)
         return
 
@@ -55,22 +55,19 @@ def main(config):
                               batch_size=config.batch_size,
                               num_workers=config.num_workers,
                               sampler=train_sampler,
-                              mode='train',
-                              augmentation_prob=config.augmentation_prob)
+                              mode='train')
     valid_loader = get_loader(image_path=config.train_path,
                               image_size=config.image_size,
                               batch_size=config.batch_size,
                               num_workers=config.num_workers,
                               sampler=valid_sampler,
-                              mode='valid',
-                              augmentation_prob=0.)
+                              mode='valid')
     test_loader = get_loader(image_path=config.valid_path,
                              image_size=config.image_size,
                              batch_size=config.batch_size,
                              num_workers=config.num_workers,
                              sampler=None,
-                             mode='test',
-                             augmentation_prob=0.)
+                             mode='test')
 
     solver = Solver(config, train_loader, valid_loader, test_loader)
 
@@ -93,19 +90,19 @@ if __name__ == '__main__':
     parser.add_argument('--output_ch', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=50)
     parser.add_argument('--num_epochs_decay', type=int, default=40)
-    parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--num_workers', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--lr', type=float, default=3e-5)
     parser.add_argument('--beta1', type=float, default=0.9)  # momentum1 in Adam
     parser.add_argument('--beta2', type=float, default=0.999)  # momentum2 in Adam
-    parser.add_argument('--augmentation_prob', type=float, default=0.5)
+    parser.add_argument('--augmentation_prob', type=float, default=0.0)
 
     parser.add_argument('--log_step', type=int, default=2)
     parser.add_argument('--val_step', type=int, default=2)
 
     # misc
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--model_type', type=str, default='AttU_Net', help='U_Net/R2U_Net/AttU_Net/R2AttU_Net')
+    parser.add_argument('--model_type', type=str, default='RCNN', help='U_Net/R2U_Net/AttU_Net/R2AttU_Net')
     parser.add_argument('--model_path', type=str, default='./models')
     parser.add_argument('--train_path', type=str, default='./dataset/train_pos/')
     parser.add_argument('--valid_path', type=str, default='./dataset/valid_pos/')
